@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Explore Correlation</title>
+<style>
+  :root { color-scheme: light; --ink:#18324b; --muted:#5b6b7a; --line:#d9e1e8; --blue:#2476b9; --orange:#e58a32; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px; font-family:Arial, Helvetica, sans-serif; color:var(--ink); background:#f4f7fa; }
+  main { max-width:1000px; margin:auto; background:white; border:1px solid var(--line); border-radius:16px; padding:24px; box-shadow:0 8px 28px #18324b12; }
+  h1 { margin:0 0 8px; font-size:clamp(25px,4vw,34px); }
+  .intro { color:var(--muted); margin:0 0 20px; line-height:1.5; }
+  .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:16px; }
+  button { border:1px solid #b9c9d7; border-radius:9px; padding:10px 15px; background:#fff; color:var(--ink); font-weight:700; cursor:pointer; }
+  button:hover { background:#edf5fb; }
+  button.active { background:#e7f2fb; border-color:var(--blue); color:#145b91; }
+  .hint { color:var(--muted); font-size:14px; margin-left:auto; }
+  .plot-wrap { position:relative; width:100%; }
+  canvas { display:block; width:100%; height:auto; border:1px solid var(--line); border-radius:12px; background:#fff; touch-action:none; }
+  .stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-top:16px; }
+  .stat { background:#f3f7fa; border-radius:10px; padding:14px; }
+  .stat .label { color:var(--muted); font-size:13px; margin-bottom:5px; }
+  .stat .value { font-size:25px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .interpretation { margin-top:14px; padding:13px 15px; border-left:4px solid var(--blue); background:#f5f9fc; line-height:1.5; border-radius:4px; }
+  .bottom { color:var(--muted); font-size:13px; margin-top:15px; line-height:1.5; }
+  @media(max-width:600px){ body{padding:10px} main{padding:15px}.stats{grid-template-columns:1fr}.hint{width:100%;margin-left:0} }
+</style>
+</head>
+<body>
+<main>
+  <h1>Explore Correlation</h1>
+  <p class="intro">Choose a pattern, then drag any point to change the data. Watch how the scatterplot, least-squares regression line, and Pearson correlation coefficient respond.</p>
+  <div class="controls" role="group" aria-label="Choose a correlation pattern">
+    <button class="active" data-pattern="positive">Positive correlation</button>
+    <button data-pattern="negative">Negative correlation</button>
+    <button data-pattern="none">No clear correlation</button>
+    <button id="reset">Reset points</button>
+    <span class="hint">Tip: drag a point within the graph.</span>
+  </div>
+  <div class="plot-wrap"><canvas id="plot" width="900" height="560" aria-label="Interactive scatterplot. Drag points to change the data."></canvas></div>
+  <section class="stats" aria-live="polite">
+    <div class="stat"><div class="label">Pearson correlation (r)</div><div class="value" id="rValue">—</div></div>
+    <div class="stat"><div class="label">Direction</div><div class="value" id="direction">—</div></div>
+    <div class="stat"><div class="label">Strength</div><div class="value" id="strength">—</div></div>
+  </section>
+  <div class="interpretation" id="interpretation">The correlation coefficient describes the direction and strength of a linear association. It does not establish causation.</div>
+  <p class="bottom"><strong>Teaching note:</strong> The regression line summarizes the linear trend. A strong correlation does not prove that one variable causes the other; consider confounding, chance, study design, and biological plausibility.</p>
+</main>
+<script>
+(() => {
+  const canvas = document.getElementById('plot'), ctx = canvas.getContext('2d');
+  const W=900,H=560, pad={l:78,r:34,t:32,b:66};
+  const xmin=0,xmax=100,ymin=0,ymax=100;
+  const px=x=>pad.l+(x-xmin)/(xmax-xmin)*(W-pad.l-pad.r);
+  const py=y=>H-pad.b-(y-ymin)/(ymax-ymin)*(H-pad.t-pad.b);
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const base=[
+    [8,18],[17,27],[25,34],[34,43],[43,48],[52,57],[61,62],[70,72],[79,78],[89,91]
+  ];
+  const patterns={
+    positive: base.map(([x,y],i)=>[x,clamp(y+[2,-4,3,-2,4,-3,2,-4,3,-1][i],5,95)]),
+    negative: base.map(([x,y],i)=>[x,clamp(100-y+[2,-4,3,-2,4,-3,2,-4,3,-1][i],5,95)]),
+    none: [[8,78],[17,25],[25,63],[34,42],[43,88],[52,17],[61,54],[70,33],[79,72],[89,47]]
+  };
+  let selected='positive', points=patterns.positive.map(p=>p.slice()), drag=-1;
+  function stats(){
+    const n=points.length, mx=points.reduce((s,p)=>s+p[0],0)/n, my=points.reduce((s,p)=>s+p[1],0)/n;
+    let cov=0,vx=0,vy=0;
+    points.forEach(([x,y])=>{cov+=(x-mx)*(y-my);vx+=(x-mx)**2;vy+=(y-my)**2;});
+    const r=(vx&&vy)?cov/Math.sqrt(vx*vy):0, slope=vx?cov/vx:0, intercept=my-slope*mx;
+    return {r,slope,intercept};
+  }
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    // grid and axes
+    ctx.font='15px Arial'; ctx.lineWidth=1; ctx.strokeStyle='#e5ebf0'; ctx.fillStyle='#536779';
+    for(let v=0;v<=100;v+=20){
+      ctx.beginPath();ctx.moveTo(px(v),pad.t);ctx.lineTo(px(v),H-pad.b);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(pad.l,py(v));ctx.lineTo(W-pad.r,py(v));ctx.stroke();
+      ctx.textAlign='center';ctx.fillText(v,px(v),H-pad.b+25);
+      ctx.textAlign='right';ctx.fillText(v,pad.l-13,py(v)+5);
+    }
+    ctx.strokeStyle='#536779';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(pad.l,pad.t);ctx.lineTo(pad.l,H-pad.b);ctx.lineTo(W-pad.r,H-pad.b);ctx.stroke();
+    ctx.fillStyle='#18324b';ctx.font='bold 17px Arial';ctx.textAlign='center';
+    ctx.fillText('Environmental exposure (illustrative units)',(pad.l+W-pad.r)/2,H-15);
+    ctx.save();ctx.translate(22,(pad.t+H-pad.b)/2);ctx.rotate(-Math.PI/2);ctx.fillText('Health outcome (illustrative units)',0,0);ctx.restore();
+    const s=stats();
+    // least-squares line
+    ctx.strokeStyle='#e58a32';ctx.lineWidth=3;ctx.setLineDash([9,6]);
+    ctx.beginPath();ctx.moveTo(px(0),py(s.intercept));ctx.lineTo(px(100),py(s.intercept+s.slope*100));ctx.stroke();ctx.setLineDash([]);
+    // points
+    points.forEach(([x,y],i)=>{
+      ctx.beginPath();ctx.arc(px(x),py(y),drag===i?10:8,0,Math.PI*2);
+      ctx.fillStyle=drag===i?'#e58a32':'#2476b9';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+    });
+    updateStats(s.r);
+  }
+  function updateStats(r){
+    const a=Math.abs(r), dir=a<0.10?'No clear linear direction':r>0?'Positive':'Negative';
+    const strength=a<0.10?'Very weak / none':a<0.30?'Weak':a<0.70?'Moderate':'Strong';
+    document.getElementById('rValue').textContent=r.toFixed(2);
+    document.getElementById('direction').textContent=dir;
+    document.getElementById('strength').textContent=strength;
+    let msg;
+    if(a<0.10) msg='There is little to no linear association in this dataset. This does not rule out a non-linear relationship.';
+    else msg=`The data show a ${strength.toLowerCase()} ${r>0?'positive':'negative'} linear association. The value of r describes association, not cause and effect.`;
+    document.getElementById('interpretation').textContent=msg;
+  }
+  function setPattern(name){
+    selected=name;points=patterns[name].map(p=>p.slice());
+    document.querySelectorAll('[data-pattern]').forEach(b=>b.classList.toggle('active',b.dataset.pattern===name));
+    draw();
+  }
+  document.querySelectorAll('[data-pattern]').forEach(b=>b.addEventListener('click',()=>setPattern(b.dataset.pattern)));
+  document.getElementById('reset').addEventListener('click',()=>setPattern(selected));
+  function pointerPos(e){
+    const rect=canvas.getBoundingClientRect();
+    return {x:(e.clientX-rect.left)*W/rect.width,y:(e.clientY-rect.top)*H/rect.height};
+  }
+  canvas.addEventListener('pointerdown',e=>{
+    const p=pointerPos(e);let best=18;
+    points.forEach(([x,y],i)=>{const d=Math.hypot(px(x)-p.x,py(y)-p.y);if(d<best){best=d;drag=i;}});
+    if(drag>=0){canvas.setPointerCapture(e.pointerId);draw();}
+  });
+  canvas.addEventListener('pointermove',e=>{
+    if(drag<0)return;const p=pointerPos(e);
+    const x=clamp(xmin+(p.x-pad.l)/(W-pad.l-pad.r)*(xmax-xmin),xmin,xmax);
+    const y=clamp(ymin+(H-pad.b-p.y)/(H-pad.t-pad.b)*(ymax-ymin),ymin,ymax);
+    points[drag]=[x,y];draw();
+  });
+  function endDrag(){drag=-1;draw();}
+  canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);
+  draw();
+})();
+</script>
+</body>
+</html>
